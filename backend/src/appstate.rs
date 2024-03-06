@@ -1,5 +1,6 @@
 use actix::Addr;
 use surrealdb::Surreal;
+use surrealdb::sql::Uuid;
 use surrealdb::engine::remote::ws::Client;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -8,16 +9,16 @@ use crate::structs::{Room, UserData, LoginForm};
 use crate::message_structs::*;
 use crate::websocket::{WsActor, WsMessage};
 
-pub type WsActorMap = HashMap<String, Addr<WsActor>>;
+pub type WsActorMap = HashMap<Uuid, Addr<WsActor>>;
 pub struct AppState {
     pub db: Arc<Surreal<Client>>,
-    pub channels: Arc<Mutex<HashMap<String, Room>>>,
-    pub actor_registry: Arc<Mutex<HashMap<String, WsActorMap>>>,
-    pub main_room_id: String,
+    pub channels: Arc<Mutex<HashMap<Uuid, Room>>>,
+    pub actor_registry: Arc<Mutex<HashMap<Uuid, WsActorMap>>>,
+    pub main_room_id: Uuid,
 }
 
 impl AppState {
-    pub async fn broadcast_message(&self, message: String, room_id: String, user_id: String) {
+    pub async fn broadcast_message(&self, message: String, room_id: &Uuid, user_id: &Uuid) {
         let query = "SELECT * FROM rooms WHERE room_id = $room_id;";
         let mut response = match self.db.query(query)
             .bind(("room_id", room_id))
@@ -34,7 +35,7 @@ impl AppState {
         let actor_registry = self.actor_registry.lock().unwrap();
 
         for room in rooms {
-            if room.users.get(&user_id).is_some() {
+            if room.users.get(user_id).is_some() {
                 for user in &room.users {
                     if let Some(client) = actor_registry.get(user) {
                         for instance in client.values() {
@@ -48,7 +49,7 @@ impl AppState {
         }
     }
 
-    pub async fn catch_up(&self, room_id: &str) -> Option<Vec<UserMessage>> {
+    pub async fn catch_up(&self, room_id: &Uuid) -> Option<Vec<UserMessage>> {
         let query = "SELECT * FROM messages WHERE room_id = $room_id ORDER BY timestamp ASC;";
         let mut response = match self.db.query(query).bind(("room_id", room_id))
             .await {
@@ -66,7 +67,7 @@ impl AppState {
         Some(user_messages)
     }
 
-    pub async fn authenticate_user(&self, login_data: &LoginForm) -> Option<String> {
+    pub async fn authenticate_user(&self, login_data: &LoginForm) -> Option<Uuid> {
         let query = "SELECT * FROM users WHERE login_username = $login_username;";
         let mut response = match self.db
             .query(query)
@@ -98,7 +99,7 @@ impl AppState {
     }
 
     pub async fn valid_user_credentials(&self, signup_data: &LoginForm) -> bool {
-        let result: Option<UserData> = match self.db.select(("logins", &signup_data.username))            .await {
+        let result: Option<UserData> = match self.db.select(("logins", &signup_data.username)).await {
             Ok(retrieved) => retrieved,
             Err(e) => {log::error!("Failed to get user : fn valid_user_credentials, error: {:?}", e);
             return false}

@@ -3,18 +3,14 @@ use actix_cors::Cors;
 use actix_session::{CookieSession, Session};
 use actix_web::{get, post, web, App, http, HttpResponse, HttpServer, Responder};
 use bcrypt::{hash, DEFAULT_COST};
-use local_ip_address::local_ip;
 use names::{Generator, Name};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
-use std::fs::read_to_string;
-use std::io::Write;
 use std::sync::{Arc, Mutex};
 use surrealdb::engine::remote::ws::Ws;
 use surrealdb::opt::auth::Root;
 use surrealdb::Surreal;
-use uuid::Uuid;
+use surrealdb::sql::Uuid;
 
 // Local packages
 mod appstate;
@@ -46,12 +42,12 @@ async fn create_login_action(
         let mut generator = Generator::with_naming(Name::Numbered);
 
         let user_data = UserData {
-            user_id: Uuid::new_v4().to_string().replace('-', ""),
+            user_id: Uuid::new_v4(),
             hashed_password: hash(login.password.clone(), DEFAULT_COST).unwrap(),
-            login_username: login.username,
+            login: login.username,
             username: generator.next().unwrap().replace('-', ""),
             status: ConnectionState::Online,
-            rooms: vec![state.main_room_id.clone()],
+            rooms: vec![state.main_room_id],
         };
         let _: Vec<UserData> = match state.db.create("users").content(user_data.clone()).await {
             Ok(created) => created,
@@ -69,8 +65,8 @@ async fn create_login_action(
         if let Err(e) = state
             .db
             .query(query)
-            .bind(("user_id", user_data.user_id.clone()))
-            .bind(("room_id", state.main_room_id.clone()))
+            .bind(("user_id", user_data.user_id))
+            .bind(("room_id", state.main_room_id))
             .await
         {
             log::error!("Error adding to room: {:?}", e);
@@ -80,7 +76,7 @@ async fn create_login_action(
         }
 
         let message = UserMessage::NewUser(NewUserMessage::new(
-            user_data.user_id.clone(),
+            user_data.user_id,
             user_data.username,
         ));
         let serialized_message = serde_json::to_string(&message).unwrap();
@@ -88,8 +84,8 @@ async fn create_login_action(
         state
             .broadcast_message(
                 serialized_message,
-                state.main_room_id.clone(),
-                user_data.user_id.clone(),
+                &state.main_room_id,
+                &user_data.user_id,
             )
             .await;
         session.insert("key", user_data.user_id).unwrap();
@@ -137,7 +133,7 @@ async fn change_username(
 ) -> impl Responder {
     let arc_state: Arc<AppState> = state.clone().into_inner();
     if let UserMessage::UsernameChange(message) = username_change.into_inner() {
-        let user_id = match session.get::<String>("key") {
+        let user_id = match session.get::<Uuid>("key") {
             Ok(Some(id)) => id,
             _ => {
                 return HttpResponse::BadRequest()
@@ -148,7 +144,7 @@ async fn change_username(
         if let Ok(mut response) = state
             .db
             .query(query)
-            .bind(("user_id", user_id.clone()))
+            .bind(("user_id", user_id))
             .await
         {
             let user_query: Option<UserData> = match response.take(0) {
@@ -182,14 +178,6 @@ async fn change_username(
     } else {
         HttpResponse::BadRequest()
             .json(json!({"error": "Invalid message format for username change."}))
-    }
-}
-
-#[get("/get-ip")]
-async fn get_ip() -> impl Responder {
-    match local_ip() {
-        Ok(ip) => HttpResponse::Ok().json(json!({"ip": ip.to_string()})),
-        Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }
 
@@ -228,19 +216,19 @@ async fn main() -> std::io::Result<()> {
         Err(_) => return Ok(()),
     };
 
-    let main_room_id = Uuid::new_v4().to_string().replace('-', "");
-    let user_id = Uuid::new_v4().to_string().replace('-', "");
+    let main_room_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
 
     // Create test user
     let _: Option<UserData> = match db
         .create(("users", "test"))
         .content(UserData {
-            user_id: user_id.clone(),
-            login_username: "test@gmail.com".to_string(),
+            user_id,
+            login: "test@gmail.com".to_string(),
             username: "test".to_string(),
             hashed_password,
             status: ConnectionState::Online,
-            rooms: vec![main_room_id.clone()],
+            rooms: vec![main_room_id],
         })
         .await
     {
@@ -258,7 +246,7 @@ async fn main() -> std::io::Result<()> {
         .create("rooms")
         .content(Room {
             name: "main".to_string(),
-            room_id: main_room_id.clone(),
+            room_id: main_room_id,
             users,
         })
         .await
@@ -292,7 +280,6 @@ async fn main() -> std::io::Result<()> {
             .service(create_login_action)
             .service(logout)
             .service(change_username)
-            .service(get_ip)
             .route("/ws/", web::get().to(ws_index))
             .wrap(CookieSession::signed(&[0; 32]).secure(false))
     })

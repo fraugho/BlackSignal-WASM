@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use std::fmt;
 
@@ -6,14 +6,16 @@ use validator::Validate;
 
 use std::collections::HashSet;
 
+use surrealdb::sql::Uuid;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UserData {
-    pub user_id: String,
-    pub login_username: String,
+    pub user_id: Uuid,
+    pub login: String,
     pub username: String,
     pub hashed_password: String,
     pub status: ConnectionState,
-    pub rooms: Vec<String>,
+    pub rooms: Vec<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -34,8 +36,8 @@ impl fmt::Display for ConnectionState {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Room {
     pub name: String,
-    pub room_id: String,
-    pub users: HashSet<String>,
+    pub room_id: Uuid,
+    pub users: HashSet<Uuid>,
 }
 
 #[derive(Deserialize, Validate)]
@@ -48,12 +50,11 @@ pub struct LoginForm {
 
 #[derive(Deserialize)]
 pub struct User {
-    pub user_id: String,
+    pub user_id: Uuid,
     pub username: String,
 }
 
-
 #[derive(Deserialize)]
 pub struct RoomUsers {
-    pub users: Vec<String>,
+    pub users: Vec<Uuid>,
 }

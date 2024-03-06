@@ -1,8 +1,9 @@
 use reqwasm::http;
-use serde::{ser, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 use web_sys::{window, HtmlInputElement, Request, RequestInit, RequestMode, Response};
+use surrealdb::sql::Uuid;
 use yew::events::SubmitEvent;
 use yew::prelude::*;
 
