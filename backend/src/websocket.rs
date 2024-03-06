@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use surrealdb::engine::remote::ws::Client;
 use surrealdb::Surreal;
-use uuid::Uuid;
+use surrealdb::sql::Uuid;
 use serde_json::json;
 use std::time::{Instant, Duration};
 
@@ -20,7 +20,7 @@ const TIME_FRAME: Duration = Duration::from_secs(10);
 pub async fn get_messages(
     app_state: Arc<AppState>, 
     actor_addr: Addr<WsActor>, 
-    room_id: String) {
+    room_id: Uuid) {
     if let Some(messages) = app_state.catch_up(&room_id).await {
         for message in messages {
             let serialized_msg = serde_json::to_string(&message).unwrap();
@@ -29,7 +29,7 @@ pub async fn get_messages(
     }
 }
 
-pub async fn change_to_online(db: Arc<Surreal<Client>>, user_id: String) {
+pub async fn change_to_online(db: Arc<Surreal<Client>>, user_id: Uuid) {
     let query = "UPDATE users SET status = 'Online' WHERE user_id = $user_id;";
     if let Err(e) = db.query(query).bind(("user_id", user_id)).await {
         log::error!(
@@ -39,7 +39,7 @@ pub async fn change_to_online(db: Arc<Surreal<Client>>, user_id: String) {
     }
 }
 
-pub async fn change_to_offline(db: Arc<Surreal<Client>>, user_id: String) {
+pub async fn change_to_offline(db: Arc<Surreal<Client>>, user_id: Uuid) {
     let query = "UPDATE users SET status = 'Offline' WHERE user_id = $user_id;";
     if let Err(e) = db.query(query).bind(("user_id", user_id)).await {
         log::error!(
@@ -50,11 +50,11 @@ pub async fn change_to_offline(db: Arc<Surreal<Client>>, user_id: String) {
 }
 
 pub struct WsActor {
-    pub ws_id: String,
-    pub user_id: String,
+    pub ws_id: Uuid,
+    pub user_id: Uuid,
     pub username: String,
-    pub current_room: String,
-    pub rooms: Vec<String>,
+    pub current_room: Uuid,
+    pub rooms: Vec<Uuid>,
     pub state: Arc<AppState>,
     pub request_token_count: u32,
     pub start_time: Instant,
@@ -88,27 +88,27 @@ impl Actor for WsActor {
         let mut actor_registry = self.state.actor_registry.lock().unwrap();
         match actor_registry.get_mut(&self.user_id) {
             Some(hashmap) => {
-                hashmap.insert(self.ws_id.clone(), ctx.address());
+                hashmap.insert(self.ws_id, ctx.address());
             }
             None => {
-                let mut hashmap: HashMap<String, Addr<WsActor>> = HashMap::new();
-                hashmap.insert(self.ws_id.clone(), ctx.address());
-                actor_registry.insert(self.user_id.clone(), hashmap);
+                let mut hashmap: HashMap<Uuid, Addr<WsActor>> = HashMap::new();
+                hashmap.insert(self.ws_id, ctx.address());
+                actor_registry.insert(self.user_id, hashmap);
             }
         }
         let db = self.state.db.clone();
         let app_state = self.state.clone();
-        let room_id = self.current_room.clone();
-        let user_id = self.user_id.clone();
+        let room_id = self.current_room;
+        let user_id = self.user_id;
         let user_info = UserInfo::new(
-            self.user_id.clone(),
-            self.ws_id.clone(),
+            self.user_id,
+            self.ws_id,
             self.username.clone(),
         );
         ctx.spawn(actix::fut::wrap_future(get_users(
             db.clone(),
             ctx.address(),
-            room_id.clone(),
+            self.current_room,
             user_info,
         )));
         ctx.spawn(actix::fut::wrap_future(get_messages(
@@ -119,8 +119,8 @@ impl Actor for WsActor {
         ctx.spawn(actix::fut::wrap_future(change_to_online(db, user_id)));
     }
 
-    fn stopped(&mut self, ctx: &mut Self::Context) {
-        let user_id = self.user_id.clone();
+    fn stopped(&mut self, _ctx: &mut Self::Context) {
+        let user_id = self.user_id;
         let db = self.state.db.clone();
         let mut actor_registry = self.state.actor_registry.lock().unwrap();
         if let Some(hashmap) = actor_registry.get_mut(&self.user_id.clone()) {
@@ -131,7 +131,7 @@ impl Actor for WsActor {
 
 }
 
-pub async fn add_user_to_room(
+pub async fn _add_user_to_room(
     user_id: String, 
     room_id: String, 
     db: Arc<Surreal<Client>>) {
@@ -164,9 +164,9 @@ impl Handler<WsMessage> for WsActor {
     }
 }
 
-pub async fn delete_message(message: DeletionMessage, sender_id: String, room_id: String, state: Arc<AppState>) {
+pub async fn delete_message(message: DeletionMessage, sender_id: Uuid, room_id: Uuid, state: Arc<AppState>) {
     let query = "SELECT * FROM messages WHERE sender_id = $sender_id AND message_id = $message_id;";
-    let mut response = match state.db.query(query).bind(("sender_id", sender_id.clone())).bind(("message_id", message.message_id.clone())).await {
+    let mut response = match state.db.query(query).bind(("sender_id", sender_id)).bind(("message_id", message.message_id.clone())).await {
         Ok(x) => x,
         Err(e) => {
             log::error!(
@@ -196,13 +196,13 @@ pub async fn delete_message(message: DeletionMessage, sender_id: String, room_id
         Err(e) => {log::error!("Failed to delete message: fn delete_message, error: {:?}", e);
         return},
     };
-    state.broadcast_message(serialized_message, room_id, sender_id).await;
+    state.broadcast_message(serialized_message, &room_id, &sender_id).await;
 }
 
 pub async fn get_users(
     db: Arc<Surreal<Client>>,
     actor_addr: Addr<WsActor>,
-    room_id: String,
+    room_id: Uuid,
     user_info: UserInfo,
 ) {
     let query = "SELECT user_id, username FROM users WHERE $room_id IN rooms;";
@@ -226,7 +226,7 @@ pub async fn get_users(
             return;
         }
     };
-    let user_map: HashMap<String, String> = users
+    let user_map: HashMap<Uuid, String> = users
         .into_iter()
         .map(|user| (user.user_id, user.username))
         .collect();
@@ -241,7 +241,7 @@ pub async fn get_users(
 }
 
 pub async fn check_and_update_username(
-    user_id: String,
+    user_id: Uuid,
     current_username: String,
     new_username: String,
     state: Arc<AppState>,
@@ -282,7 +282,7 @@ pub async fn check_and_update_username(
 
                 let serialized_msg = serde_json::to_string(&message).unwrap();
                 state
-                    .broadcast_message(serialized_msg, state.main_room_id.clone(), user_id)
+                    .broadcast_message(serialized_msg, &state.main_room_id, &user_id)
                     .await;
                 Ok(HttpResponse::Ok().json(json!({"message": "Username updated successfully"}))
             )
@@ -314,16 +314,16 @@ impl StreamHandler<std::result::Result<ws::Message, ws::ProtocolError>> for WsAc
                         let now = Utc::now();
                         let basic_message = BasicMessage {
                             content: ts_basic_message.content,
-                            sender_id: self.user_id.clone(),
+                            sender_id: self.user_id,
                             timestamp: now.timestamp() as u64,
-                            message_id: Uuid::new_v4().to_string().replace('-', ""),
-                            room_id: self.current_room.clone(),
-                            ws_id: self.ws_id.clone(),
+                            message_id: Uuid::new_v4(),
+                            room_id: self.current_room,
+                            ws_id: self.ws_id,
                         };
                         actix::spawn(async move {
                             let _: Option<BasicMessage> = match app_state
                                 .db
-                                .create(("messages", basic_message.message_id.clone()))
+                                .create(("messages", basic_message.message_id))
                                 .content(basic_message.clone())
                                 .await {
                                     Ok(retrieved) => retrieved,
@@ -338,26 +338,26 @@ impl StreamHandler<std::result::Result<ws::Message, ws::ProtocolError>> for WsAc
                             app_state
                                 .broadcast_message(
                                     serialized_msg,
-                                    basic_message.room_id,
-                                    basic_message.sender_id,
+                                    &basic_message.room_id,
+                                    &basic_message.sender_id,
                                 )
                                 .await;
                         });
                     }
                     UserMessage::Deletion(message) => {
-                        let sender_id = self.user_id.clone();
+                        let sender_id = self.user_id;
                         let state = self.state.clone();
-                        let room_id = self.current_room.clone();
+                        let room_id = self.current_room;
                         ctx.spawn(actix::fut::wrap_future(delete_message(message, sender_id, room_id, state)));
                         
                     }
                     UserMessage::CreateRoomChange(create_room_change_message) => {
-                        let room_id = Uuid::new_v4().to_string().replace('-', "");
+                        let room_id = Uuid::new_v4();
                         let room_name = create_room_change_message.room_name;
                         let app_state = self.state.clone();
-                        self.rooms.push(room_id.clone());
+                        self.rooms.push(room_id);
                         let mut users = HashSet::new();
-                        users.insert(self.user_id.clone());
+                        users.insert(self.user_id);
                         actix::spawn(async move {
                             let _: Vec<Room> = match app_state
                                 .db
@@ -412,13 +412,13 @@ pub async fn ws_index(
     state: web::Data<AppState>,
     session: Session,
 ) -> std::result::Result<HttpResponse, actix_web::Error> {
-    let main_room_id = state.main_room_id.clone();
-    if let Some(user_id) = session.get::<String>("key").unwrap() {
+    let main_room_id = state.main_room_id;
+    if let Some(user_id) = session.get::<Uuid>("key").unwrap() {
         let query = "SELECT * FROM users WHERE user_id = $user_id;";
         let mut response = match state
             .db
             .query(query)
-            .bind(("user_id", user_id.clone()))
+            .bind(("user_id", user_id))
             .await {
                 Ok(retrieved) => retrieved,
                 Err(e) => {log::error!("Failed to query user data: fn ws_index, error: {:?}", e);
@@ -442,9 +442,9 @@ pub async fn ws_index(
             Some(user) => {
                 let ws_actor = WsActor {
                     user_id,
-                    ws_id: Uuid::new_v4().to_string().replace('-', ""),
+                    ws_id: Uuid::new_v4(),
                     username: user.username,
-                    current_room: main_room_id.clone(),
+                    current_room: main_room_id,
                     rooms: user.rooms,
                     state: state.into_inner().clone(),
                     request_token_count: MESSAGE_TOKENS,
