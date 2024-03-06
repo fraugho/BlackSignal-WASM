@@ -1,0 +1,50 @@
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+
+  background: linear-gradient(to bottom right, #444444, black);
+  font-size: 1.5rem;
+}
+
+main {
+  /* Define the gradient as a background */
+  background-image: linear-gradient(to top right, white, grey);
+  
+  /* Make sure the background is only behind the text */
+  -webkit-background-clip: text;
+  background-clip: text;
+  
+  /* Use this to make the text transparent, showing the background */
+  color: transparent;
+  
+  font-family: sans-serif;
+  text-align: center;
+}
+
+
+.logo {
+  height: 20em;
+}
+
+h1 + .subtitle {
+  display: block;
+  margin-top: -1em;
+}
+
+input[type="text"], input[type="password"] {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-sizing: border-box;
+  background-color: black;
+  font-family: Montserrat;
+}
