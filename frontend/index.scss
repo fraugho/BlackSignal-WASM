@@ -28,7 +28,6 @@ main {
   text-align: center;
 }
 
-
 .logo {
   height: 20em;
 }
@@ -47,4 +46,10 @@ input[type="text"], input[type="password"] {
   box-sizing: border-box;
   background-color: black;
   font-family: Montserrat;
+}
+
+input[type="message-area"]{
+  display: flex;
+  background-color: black;
+  border: 1px solid white;
 }

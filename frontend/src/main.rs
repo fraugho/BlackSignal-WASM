@@ -7,7 +7,7 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 
 use pages::home::HomePage;
-use pages::login::LoginPage;
+use pages::login::{CreateLoginPage, LoginPage};
 
 // Define your application routes
 #[derive(Routable, PartialEq, Clone, Debug)]
@@ -16,6 +16,8 @@ pub enum Route {
     Home,
     #[at("/login")]
     Login,
+    #[at("/create_login")]
+    CreateLogin,
 }
 
 // Define the switch function to render components based on the route
@@ -23,6 +25,7 @@ fn switch(routes: Route) -> Html {
     match routes {
         Route::Home => html! { <HomePage /> },
         Route::Login => html! { <LoginPage /> },
+        Route::CreateLogin => html! { <CreateLoginPage /> },
     }
 }
 
