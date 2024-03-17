@@ -1,16 +1,18 @@
-use actix_files::Files;
 use actix_cors::Cors;
-use actix_session::{CookieSession, Session};
-use actix_web::{get, post, web, App, http, HttpResponse, HttpServer, Responder};
+use actix_files::Files;
+use actix_session::storage::RedisActorSessionStore;
+use actix_session::{Session, SessionMiddleware};
+use actix_web::cookie::Key;
+use actix_web::{get, http, post, web, App, HttpResponse, HttpServer, Responder};
 use bcrypt::{hash, DEFAULT_COST};
 use names::{Generator, Name};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use surrealdb::engine::remote::ws::Ws;
+use surrealdb::engine::remote::ws::{Client, Ws};
 use surrealdb::opt::auth::Root;
-use surrealdb::Surreal;
 use surrealdb::sql::Uuid;
+use surrealdb::Surreal;
 
 // Local packages
 mod appstate;
@@ -75,18 +77,12 @@ async fn create_login_action(
             );
         }
 
-        let message = UserMessage::NewUser(NewUserMessage::new(
-            user_data.user_id,
-            user_data.username,
-        ));
+        let message =
+            UserMessage::NewUser(NewUserMessage::new(user_data.user_id, user_data.username));
         let serialized_message = serde_json::to_string(&message).unwrap();
 
         state
-            .broadcast_message(
-                serialized_message,
-                &state.main_room_id,
-                &user_data.user_id,
-            )
+            .broadcast_message(serialized_message, &state.main_room_id, &user_data.user_id)
             .await;
         session.insert("key", user_data.user_id).unwrap();
         HttpResponse::Found()
@@ -141,12 +137,7 @@ async fn change_username(
             }
         };
         let query = "SELECT * FROM users WHERE user_id = $user_id;";
-        if let Ok(mut response) = state
-            .db
-            .query(query)
-            .bind(("user_id", user_id))
-            .await
-        {
+        if let Ok(mut response) = state.db.query(query).bind(("user_id", user_id)).await {
             let user_query: Option<UserData> = match response.take(0) {
                 Ok(data) => data,
                 Err(e) => {
@@ -181,13 +172,12 @@ async fn change_username(
     }
 }
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn db_setup() -> Option<Surreal<Client>> {
     let db = match Surreal::new::<Ws>("localhost:8000").await {
         Ok(connected) => connected,
         Err(e) => {
             log::error!("Failed to connect to database: fn main, error: {:?}", e);
-            return Ok(());
+            return None;
         }
     };
     match db
@@ -200,24 +190,31 @@ async fn main() -> std::io::Result<()> {
         Ok(connected) => connected,
         Err(e) => {
             log::error!("Failed to login to database: fn main, error: {:?}", e);
-            return Ok(());
+            return None;
         }
     };
     match db.use_ns("general").use_db("all").await {
         Ok(connected) => connected,
         Err(e) => {
             log::error!("Failed use namespace of database: fn main, error: {:?}", e);
-            return Ok(());
+            return None;
         }
     };
+    return Some(db);
+}
+
+async fn test_data_init() -> Option<web::Data<AppState>> {
+    let db = match db_setup().await {
+        Some(db) => db,
+        None => return None,
+    };
+    let main_room_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
 
     let hashed_password = match hash("password", DEFAULT_COST) {
         Ok(hashed) => hashed,
-        Err(_) => return Ok(()),
+        Err(_) => return None,
     };
-
-    let main_room_id = Uuid::new_v4();
-    let user_id = Uuid::new_v4();
 
     // Create test user
     let _: Option<UserData> = match db
@@ -235,7 +232,7 @@ async fn main() -> std::io::Result<()> {
         Ok(created) => created,
         Err(e) => {
             log::error!("Failed to create test user data: fn main, error: {:?}", e);
-            return Ok(());
+            return None;
         }
     };
 
@@ -254,16 +251,26 @@ async fn main() -> std::io::Result<()> {
         Ok(created) => created,
         Err(e) => {
             log::error!("Failed to create room data: fn main, error: {:?}", e);
-            return Ok(());
+            return None;
         }
     };
 
-    let app_state = web::Data::new(AppState {
+    return Some(web::Data::new(AppState {
         db: Arc::new(db),
         channels: Arc::new(Mutex::new(HashMap::new())),
         main_room_id,
         actor_registry: Arc::new(Mutex::new(HashMap::new())),
-    });
+    }));
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    env_logger::init();
+
+    let state = match test_data_init().await {
+        Some(data) => data,
+        None => return Ok(()),
+    };
 
     HttpServer::new(move || {
         let cors = Cors::default()
@@ -275,13 +282,16 @@ async fn main() -> std::io::Result<()> {
             .max_age(3600); // Cache the CORS preflight requests
         App::new()
             .wrap(cors)
-            .app_data(app_state.clone())
+            .wrap(SessionMiddleware::new(
+                RedisActorSessionStore::new("127.0.0.1:6379"),
+                Key::generate(),
+            ))
+            .app_data(state.clone())
             .service(login_action)
             .service(create_login_action)
             .service(logout)
             .service(change_username)
             .route("/ws/", web::get().to(ws_index))
-            .wrap(CookieSession::signed(&[0; 32]).secure(false))
     })
     .bind(("0.0.0.0", 8080))?
     .run()
