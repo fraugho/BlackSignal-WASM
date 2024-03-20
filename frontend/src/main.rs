@@ -1,4 +1,5 @@
 mod pages {
+    pub mod create_login;
     pub mod home;
     pub mod login;
 }
@@ -6,8 +7,9 @@ mod pages {
 use yew::prelude::*;
 use yew_router::prelude::*;
 
+use pages::create_login::CreateLoginPage;
 use pages::home::HomePage;
-use pages::login::{CreateLoginPage, LoginPage};
+use pages::login::LoginPage;
 
 // Define your application routes
 #[derive(Routable, PartialEq, Clone, Debug)]

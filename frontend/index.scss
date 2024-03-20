@@ -2,6 +2,7 @@ html,
 body {
   height: 100%;
   margin: 0;
+  top: 0;
 }
 
 body {
@@ -49,6 +50,12 @@ input[type="text"], input[type="password"] {
 }
 
 input[type="message-area"]{
+  display: flex;
+  background-color: black;
+  border: 1px solid white;
+}
+
+button[type="message-submit"]{
   display: flex;
   background-color: black;
   border: 1px solid white;

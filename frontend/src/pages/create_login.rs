@@ -14,8 +14,8 @@ pub struct LoginForm {
     password: String,
 }
 
-#[function_component(LoginPage)]
-pub fn login_page() -> Html {
+#[function_component(CreateLoginPage)]
+pub fn create_login_page() -> Html {
     let onclick = Callback::from(|_| {
         let document = window().unwrap().document().unwrap();
 
@@ -42,7 +42,7 @@ pub fn login_page() -> Html {
         println!("{}", serialized_data);
 
         wasm_bindgen_futures::spawn_local(async move {
-            login(&serialized_data).await;
+            create_login(&serialized_data).await;
         });
     });
 
@@ -50,7 +50,7 @@ pub fn login_page() -> Html {
         <main>
             <h1 style="text-align: center; margin: 10; padding: 0;">{ "BlackSignal" }</h1>
             <div>
-                <h2>{"Login"}</h2>
+                <h2>{"Create Login"}</h2>
                 <input type="text" id="username" placeholder={"Username"} />
                 <input type="password" id="password" placeholder={"Password"} />
                 <button onclick={onclick}>{"Login"}</button>
@@ -59,8 +59,8 @@ pub fn login_page() -> Html {
     }
 }
 
-pub async fn login(login: &str) -> Result<String, String> {
-    let request = match http::Request::post("http://0.0.0.0:8080/login")
+pub async fn create_login(login: &str) -> Result<String, String> {
+    let request = match http::Request::post("http://0.0.0.0:8080/create_login")
         .header("Content-Type", "application/json")
         .body(login)
     {
